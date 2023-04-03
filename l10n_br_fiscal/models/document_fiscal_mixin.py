@@ -174,6 +174,12 @@ class FiscalDocumentMixin(models.AbstractModel):
         store=True,
     )
 
+    amount_icms_relief_value = fields.Monetary(
+        string="ICMS desonerado",
+        compute="_compute_amount",
+        store=True,
+    )
+
     amount_ipi_base = fields.Monetary(
         string="IPI Base",
         compute="_compute_amount",

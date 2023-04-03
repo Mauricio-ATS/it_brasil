@@ -26,8 +26,50 @@ class AccountMove(models.Model):
     ]
     _inherits = {"l10n_br_fiscal.document": "fiscal_document_id"}
     _order = "date DESC, name DESC"
+    amount_icms_relief_value = fields.Monetary(
+        inverse="_inverse_amount_icms_relief",
+        compute="_compute_amount",
+        store=True,
+    )
 
     # necessario para mostrar o campo total corretamente incluido frete, outros e seguros
+    @api.depends('amount_icms_relief_value')
+    def _inverse_amount_icms_relief(self):
+        if len(self) > 1:
+            return
+        if self.move_type not in ('in_invoice','out_invoice'):
+            return
+        for move in self:
+            if move.payment_state == 'invoicing_legacy':
+                move.payment_state = move.payment_state
+                continue
+            for line in move.line_ids:
+                if line.name in ["[DESONERACAO]"]:
+                    move.with_context(
+                        check_move_validity=False,
+                        skip_account_move_synchronization=True,
+                        force_delete=True,
+                    ).write(
+                        {
+                            "line_ids": [(2, line.id)],
+                            "to_check": False,
+                        }
+                    )
+            for line in move.line_ids:
+                if not line.exclude_from_invoice_tab and line.icms_relief_value > 0:
+                    if line.icms_relief_value:
+                        new_line = self.env["account.move.line"].new(
+                            {
+                                "name": "[DESONERACAO]",
+                                "account_id": line.account_id.id,
+                                "move_id": self.id,
+                                "exclude_from_invoice_tab": True,
+                                "price_unit": -line.icms_relief_value,
+                            }
+                        )
+                    move.line_ids += new_line
+                    move.with_context(check_move_validity=False)._onchange_currency()
+
     @api.depends(
         'line_ids.matched_debit_ids.debit_move_id.move_id.payment_id.is_matched',
         'line_ids.matched_debit_ids.debit_move_id.move_id.line_ids.amount_residual',
@@ -42,7 +84,9 @@ class AccountMove(models.Model):
         'line_ids.amount_residual',
         'line_ids.amount_residual_currency',
         'line_ids.payment_id.state',
-        'line_ids.full_reconcile_id',)
+        'line_ids.full_reconcile_id',
+        'line_ids.icms_relief_value'
+    )
     def _compute_amount(self):
         result = super()._compute_amount()
         if len(self) > 1:
